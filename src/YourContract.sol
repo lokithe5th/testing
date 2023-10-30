@@ -4,19 +4,13 @@ pragma solidity >=0.8.0 <0.9.0;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-// custom errors
-error TRANSFER_FAILED();
-error INVALID_ARRAY_INPUT();
-error NO_ACTIVE_STREAM();
-error NOT_ENOUGH_FUNDS_IN_CONTRACT();
-error NOT_ENOUGH_FUNDS_IN_STREAM();
-
 contract YourContract is Ownable {
     struct BuilderStreamInfo {
         uint256 cap;
         uint256 last;
         address optionalTokenAddress;
     }
+
     mapping(address => BuilderStreamInfo) public streamedBuilders;
     // ToDo. Change to 30 days
     uint256 public constant FREQUENCY = 2592000; // 30 days
@@ -24,6 +18,13 @@ contract YourContract is Ownable {
     event Withdraw(address indexed to, uint256 amount, string reason);
     event AddBuilder(address indexed to, uint256 amount);
     event UpdateBuilder(address indexed to, uint256 amount);
+
+    // custom errors
+    error TRANSFER_FAILED();
+    error INVALID_ARRAY_INPUT();
+    error NO_ACTIVE_STREAM();
+    error NOT_ENOUGH_FUNDS_IN_CONTRACT();
+    error NOT_ENOUGH_FUNDS_IN_STREAM();
 
     constructor() { }
 
