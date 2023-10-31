@@ -84,6 +84,8 @@ Next step: adding a test for `addBuilderStream()`
     }
 ```
 
+### On Errors and Emissions
+
 We run this test with `forge test` and... BOOM! An error. But what did we do wrong? Our clues will be in the logs: 
 
 ```
@@ -132,6 +134,8 @@ Running 2 tests for test/YourContract.t.sol:YourContractTest
 Test result: ok. 2 passed; 0 failed; 0 skipped; finished in 447.81µs
 ```
 
+### Look Deeper
+
 Getting an error that's tricky to resolve, or just curious to see what's going on under the hood? Run your tests with increased verbosity: `forge test -vvvv`:  
 ```
 Ran 1 test suites: 2 tests passed, 0 failed, 0 skipped (2 total tests)
@@ -162,6 +166,8 @@ Test result: ok. 2 passed; 0 failed; 0 skipped; finished in 461.90µs
 ```
 
 Inspecting the tests in this way is an awesome way to track function calls if you are doing a contest.  
+
+## Tests, tests, tests
 
 You might have noticed that my `test_addBuilderStream` function is a bit light. Yes, we call the intended function on the contract, but we don't validate that everything's been emitted and set appropriately. Let's do that now:
 ```
@@ -201,6 +207,10 @@ Now we want to test a negative case. What happens if the function is called by a
 ```  
 
 We now have the basics, so I'm going to go ahead and complete the rest of the unit tests for you. These are all in the repo.  
+
+## A skeleton emerges 
+
+The test file is starting to look a bit more fleshed out now, but we are far from done. After adding some more tests for withdrawing ETH our file looks like this:
 
 ```
 // SPDX-License-Identifier: UNLICENSED
@@ -469,4 +479,4 @@ contract YourContractTest is Test {
 
 The repo now contains all necessary unit tests for the ETH streaming functionality.  
 
-Crucially, we haven't even touched token streams or fuzzing yet! If you're interested, check back out the branch Part-2, to see how we set up a mock token to test with, and take our first baby steps with Foundry's fuzzer.
+Crucially, we haven't even touched token streams or fuzzing yet! If you're interested, check back soon for the branch Part-2, to see how we set up a mock token to test with, and take our first baby steps with Foundry's fuzzer.
