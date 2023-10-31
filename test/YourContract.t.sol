@@ -16,6 +16,8 @@ contract YourContractTest is Test {
     address public alice = address(102);
     address public dave = address(103);
 
+    uint256 public constant DEFAULT_STREAM_VALUE = 0.5 ether;
+
     // Events to test
     event Withdraw(address indexed to, uint256 amount, string reason);
     event AddBuilder(address indexed to, uint256 amount);
@@ -37,20 +39,20 @@ contract YourContractTest is Test {
     }
 
     // We do a simple unit test to give Bob a stream
-    // We are giving him a cap of 0.5 ether
+    // We are giving him a cap of DEFAULT_STREAM_VALUE
     // We specifying address(0) to signify this is an ether stream
     function test_addBuilderStream() public {
         // Emits can be tricky in foundry
         vm.expectEmit(true, true, false, true, address(yourContract));
-        emit AddBuilder(bob, 0.5 ether);
+        emit AddBuilder(bob, DEFAULT_STREAM_VALUE);
 
-        yourContract.addBuilderStream(payable(bob), 0.5 ether, address(0));
+        yourContract.addBuilderStream(payable(bob), DEFAULT_STREAM_VALUE, address(0));
 
         // Let's make sure that Bob has been added successfully  
         // We get the newly added data from the struct
         (uint256 cap, , address token) = yourContract.streamedBuilders(bob);
         // We assert that the cap is 0.5 as expected
-        assertEq(cap, 0.5 ether);
+        assertEq(cap, DEFAULT_STREAM_VALUE);
         // We assert the token address is address(0) as expected
         assertEq(address(0), token);
     }
@@ -65,7 +67,7 @@ contract YourContractTest is Test {
         // the next contract call does not revert with the appropriate reason
         vm.expectRevert("Ownable: caller is not the owner");
 
-        yourContract.addBuilderStream(payable(bob), 0.5 ether, address(0));
+        yourContract.addBuilderStream(payable(bob), DEFAULT_STREAM_VALUE, address(0));
     }
 
     function test_updateBuilderStreamCap() public {
@@ -93,7 +95,7 @@ contract YourContractTest is Test {
 
         // We assert the update didn't go through
         (uint256 cap, ,) = yourContract.streamedBuilders(bob);
-        assertEq(cap, 0.5 ether);
+        assertEq(cap, DEFAULT_STREAM_VALUE);
     }
 
     // Check against a call to update a non-existant builder
@@ -109,40 +111,40 @@ contract YourContractTest is Test {
         address[] memory tokens = new address[](3);
 
         builders[0] = (bob);
-        caps[0] = 0.5 ether;
+        caps[0] = DEFAULT_STREAM_VALUE;
         tokens[0] = address(0);
 
         builders[1] = (alice);
-        caps[1] = 0.5 ether;
+        caps[1] = DEFAULT_STREAM_VALUE;
         tokens[1] = address(0);
 
         builders[2] = (dave);
-        caps[2] = 0.5 ether;
+        caps[2] = DEFAULT_STREAM_VALUE;
         tokens[2] = address(0);
 
         // We expect multiple emits
         vm.expectEmit(true, true, false, true, address(yourContract));
-        emit AddBuilder(bob, 0.5 ether);
+        emit AddBuilder(bob, DEFAULT_STREAM_VALUE);
 
         vm.expectEmit(true, true, false, true, address(yourContract));
-        emit AddBuilder(alice, 0.5 ether);
+        emit AddBuilder(alice, DEFAULT_STREAM_VALUE);
         
         vm.expectEmit(true, true, false, true, address(yourContract));
-        emit AddBuilder(dave, 0.5 ether);
+        emit AddBuilder(dave, DEFAULT_STREAM_VALUE);
 
         yourContract.addBatch(builders, caps, tokens);
 
         // We assert that the batch was added successfully
         (uint256 cap, , address token) = yourContract.streamedBuilders(bob);
-        assertEq(cap, 0.5 ether);
+        assertEq(cap, DEFAULT_STREAM_VALUE);
         assertEq(token, address(0));
 
         (cap, , token) = yourContract.streamedBuilders(alice);
-        assertEq(cap, 0.5 ether);
+        assertEq(cap, DEFAULT_STREAM_VALUE);
         assertEq(token, address(0));
 
         (cap, , token) = yourContract.streamedBuilders(dave);
-        assertEq(cap, 0.5 ether);
+        assertEq(cap, DEFAULT_STREAM_VALUE);
         assertEq(token, address(0));
     }
 
@@ -153,11 +155,11 @@ contract YourContractTest is Test {
         address[] memory tokens = new address[](3);
 
         builders[0] = (bob);
-        caps[0] = 0.5 ether;
+        caps[0] = DEFAULT_STREAM_VALUE;
         tokens[0] = address(0);
 
         builders[1] = (alice);
-        caps[1] = 0.5 ether;
+        caps[1] = DEFAULT_STREAM_VALUE;
         tokens[1] = address(0);
 
         builders[2] = (dave);
@@ -179,6 +181,80 @@ contract YourContractTest is Test {
         (cap, , token) = yourContract.streamedBuilders(dave);
         assertEq(cap, 0);
         assertEq(token, address(0));
+    }
+
+    // Check that the contract can receive ETH
+    function test_receiveETH() public {
+        // We test this by sending one ether to the contract
+        (bool success, ) = address(yourContract).call{value: 1 ether}("");
+        require(success, "Failed to send");
+
+        // We assert that the contract has this balance
+        assertEq(address(yourContract).balance, 1 ether);
+    }
+
+    function test_streamWithdraw() public {
+        // First we must add a stream
+        test_addBuilderStream();
+        // Then we should fund it
+        test_receiveETH();
+
+        // Now we need enough time to pass so that the stream is full
+        vm.warp(block.timestamp + 31 days);
+
+        // We check that Bob can withdraw DEFAULT_STREAM_VALUE
+        assertEq(yourContract.unlockedBuilderAmount(bob), DEFAULT_STREAM_VALUE);
+
+        // We withdraw the ether, impersonating bob
+        uint256 bobBalance = bob.balance;
+
+        vm.startPrank(bob);
+        
+        vm.expectEmit(true, true, true, true, address(yourContract));
+        emit Withdraw(bob, DEFAULT_STREAM_VALUE, "Some reason");
+
+        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "Some reason");
+
+        // We assert that bob's balance is now DEFAULT_STREAM_VALUE more
+        assertEq(bob.balance, bobBalance + DEFAULT_STREAM_VALUE);
+    }
+
+    function test_streamWithdrawNoETH() public {
+        test_addBuilderStream();
+        // Now we need enough time to pass so that the stream is full
+        vm.warp(block.timestamp + 31 days);
+
+        // We check that Bob can withdraw DEFAULT_STREAM_VALUE
+        assertEq(yourContract.unlockedBuilderAmount(bob), DEFAULT_STREAM_VALUE);
+
+        // We expect the withdraw to revert  
+        vm.expectRevert(YourContract.NOT_ENOUGH_FUNDS_IN_CONTRACT.selector);
+        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
+    }
+
+
+    function test_streamWithdrawNoBuilder() public {
+        test_receiveETH();
+        // Now we need enough time to pass so that the stream is full
+        vm.warp(block.timestamp + 31 days);
+
+        // We check that Alice cannot withdraw anything
+        assertEq(yourContract.unlockedBuilderAmount(alice), 0);
+
+        // We expect the withdraw to revert  
+        vm.expectRevert(YourContract.NO_ACTIVE_STREAM.selector);
+        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
+    }
+
+    function test_streamWithdrawNotEnoughFundsInStream() public {
+        test_addBuilderStream();
+        test_receiveETH();
+        // Now we need enough time to pass so that the stream is full
+        vm.warp(block.timestamp + 21 days);
+
+        // We expect the withdraw to revert  
+        vm.expectRevert(YourContract.NOT_ENOUGH_FUNDS_IN_STREAM.selector);
+        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
     }
 
 }
