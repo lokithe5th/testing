@@ -111,10 +111,8 @@ contract YourContract is Ownable {
         builderStream.last = builderStream.last + ((block.timestamp - builderStream.last) * _amount / totalAmountCanWithdraw);
 
         if(builderStream.optionalTokenAddress == address(0)){
-
             (bool sent,) = msg.sender.call{value: _amount}("");
             if (!sent) revert TRANSFER_FAILED();
-
         } else {
             bool success = token.transfer(msg.sender, _amount);
             if (!success) revert TRANSFER_FAILED();
