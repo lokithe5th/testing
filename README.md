@@ -1,159 +1,108 @@
-# Testing in Foundry - Part 2
+# Testing in Foundry - Part 3
 
-## Introduction  
+## Let's get fuzzical!
 
-We are continuing with creating the tests for the BuidlGuidl Token streams contract. 
+If you've been following along you'll know that we've gone from no tests, up to a fairly well-covered unit test repo for the BuidlGuidl's streaming contract. Although this is great to make sure the contracts do what we want them to do under ideal circumstances, on the blockchain circumstances may never be ideal.
 
-The focus today is completing all the ETH related unit tests and then tacking the token related tests as well.
+There is a lot of theory on fuzzing and some great blogs about it too, but to keep it simple: For our purposes, when we talk about fuzzing we mean that we are using a tool (like Foundry) to programmatically generate several (sometimes thousands) of different inputs against which we test the state in our contracts. 
 
-## Start-stop  
+This is helpful for a number of reasons: 
+1) it better simulates real-world behaviour (if only everything was a happy-path)
+2) it is faster than manually writing a test for each possible scenario
+3) it allows us to identify and explore edge cases that can only be found with certain contract states (find something even if we are not looking for it)
 
-Within the first few minutes we run into an interesting issue. All code has bugs and test code is no exception.
+## Fuzzing in Foundry  
 
+Foundry helpfully has native support for fuzzing. Want to see it in action? It's simple!
 
-We are trying to create a unit test that triggers the `NOT_ENOUGH_FUNDS_IN_STREAM` error when calling `streamWithdraw`: 
-```
-        uint256 totalAmountCanWithdraw = unlockedBuilderAmount(msg.sender);
-        if(totalAmountCanWithdraw < _amount) revert NOT_ENOUGH_FUNDS_IN_STREAM();
-
-```
-
-Using this test as a base:  
+We start with our simplest test to demonstrate. Adding a stream for Bob (the buidler): 
 
 ```
-    function test_streamWithdrawNotEnoughFundsInContract() public {
-        // We are adding Bob
-        test_addBuilderStream();
-        (bool success, ) = address(yourContract).call{value: 0.2 ether}("");
+    function test_addBuilderStream() public {
+        // Emits can be tricky in foundry
+        vm.expectEmit(true, true, false, true, address(yourContract));
+        emit AddBuilder(bob, DEFAULT_STREAM_VALUE);
 
-        // Now we need enough time to pass so that the stream is full
-        vm.warp(block.timestamp + 21 days);
+        yourContract.addBuilderStream(payable(bob), DEFAULT_STREAM_VALUE, address(0));
 
-        // We expect the withdraw to revert  
-        vm.startPrank(bob);
-        vm.expectRevert(YourContract.NOT_ENOUGH_FUNDS_IN_CONTRACT.selector);
-        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
+        // Let's make sure that Bob has been added successfully  
+        // We get the newly added data from the struct
+        (uint256 cap, , address token) = yourContract.streamedBuilders(bob);
+        // We assert that the cap is 0.5 as expected
+        assertEq(cap, DEFAULT_STREAM_VALUE);
+        // We assert the token address is address(0) as expected
+        assertEq(address(0), token);
     }
 ```
 
-We run into an issue immediately. Bob can, despite only a part of the time running out, withdraw all his ETH. 
+Foundry recognizes that we want to fuzz the inputs for a certain test, when we specify input variables for our test functions. These inputs can then be used in the function itself. We then swap out our static instances of `Bob` and `DEFAULT_STREAM_VALUE` for the input variables `_builder` and `_cap`. Note that I changed the test name to `test_addBuilderStreamEth`. This leaves us with:
 
-There are two possibilities for this: either the test is wrong, or there is an issue in the contract itself. Let's find out which it is!
-
-### Step 1: Hypothesis  
-
-As the most complex part of the code is the stream accrual as time passes, the issue may be linked to that.
-
-Hypothesis (call it H0): the stream accrual calculation is wrong.
-Alternative hypothesis (call it H1): there is another underlying cause.
-
-### Step 2: Test our H0
-We can test this by logging the stream accrual calculation performed by `yourContract.unlockedBuilderAmount()` and setting the time via `vm.warp`.
-
-We are focusing on this problem test, which we can run with: `forge test --match-test test_streamWithdrawNotWnoughFundsInStream -vvv`
-
-The test looks like this:  
 ```
-    function test_streamWithdrawNotEnoughFundsInStream() public {
-        // We are adding Bob
-        // 16 Nov 2023
-        vm.warp(1700123467);
-        test_addBuilderStream();
-        (bool success, ) = address(yourContract).call{value: 0.7 ether}("");
-        console2.log("Bob's unlocked stream ", yourContract.unlockedBuilderAmount(bob));
-        // Now we need time to pass so the stream is not full
-        // 30 Nov 2023
-        vm.warp(1701333065);
-        console2.log("Bob's unlocked stream ", yourContract.unlockedBuilderAmount(bob));
-        // We expect the withdraw to revert  
-        vm.startPrank(bob);
-        //vm.expectRevert(YourContract.NOT_ENOUGH_FUNDS_IN_STREAM.selector);
-        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
-        vm.stopPrank();
-        console2.log("Bob's balance ", bob.balance);
+    function test_addBuilderStreamEth(address _builder, uint256 _cap) public {
+        // We can specify bounds for fuzzed inputs using `vm.assume`
+        vm.assume(_cap <= DEFAULT_STREAM_VALUE);
+        // Emits can be tricky in foundry
+        vm.expectEmit(true, true, false, true, address(yourContract));
+        emit AddBuilder(_builder, _cap);
+
+        yourContract.addBuilderStream(payable(_builder), _cap, address(0));
+
+        // Let's make sure that Bob has been added successfully  
+        // We get the newly added data from the struct
+        (uint256 cap, , address token) = yourContract.streamedBuilders(_builder);
+        // We assert that the cap is 0.5 as expected
+        assertEq(cap, _cap);
+        // We assert the token address is address(0) as expected
+        assertEq(address(0), token);
     }
 ```
 
-And our output is this: 
+When we run this via `test --match-test test_addBuilderStreamEth -vvv` and get: 
 ```
 Running 1 test for test/YourContract.t.sol:YourContractTest
-[PASS] test_streamWithdrawNotEnoughFundsInStream() (gas: 119486)
-Logs:
-  Bob's unlocked stream  500000000000000000
-  Bob's unlocked stream  500000000000000000
-  Bob's balance  500000000000000000
+[PASS] test_addBuilderStreamEth(address,uint256) (runs: 256, μ: 61117, ~: 63061)
+Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 22.48ms
 
-Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.16ms
+Ran 1 test suites: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 ```
 
-### Step 3: Interpretation
+With a few simple tweaks we see that Foundry ran this test 256 times!
 
-What this tells us is that according to the logic in the contract, Bob had 0.5 ether available immediately after his stream was opened. 
+## Changes  
 
-> This may signal a bug in the contract. We should ascertain from the devs if the entire stream is supposed to be withdrawable immediately after the first funding.
+Inevitably this requires changes to the other tests. But the amount of freedom this provides you as a developer means that it is well worth the effort. 
 
-After reaching out to Austin, he points us in the direction of his [tweets earlier this year](https://x.com/austingriffith/status/1674444986463719424?s=46&t=3J-S7_iZrqdWSB0sUNFYRA). This confirms that it is expected behaviour.
+## Invariants
 
-### Step 4: Conclusion  
-We accept our alternative hypothesis, meaning that the stream accrual logic is not faulty, but that the underlying cause was something else. 
+At this point it may be a good idea to talk about invariants. Although there is (once again) a plethora of great articles/blogs or and videos about the topic, in it's simplest form: an invariant is a context-specific condition related to the state of your contract that must always hold.
 
-In this case, the issue was our assumption that the stream should not be withdrawable immediately after opening. This was incorrect! As Austin helpfully noted that builders are trusted and their first withdrawal can happen immediately.
+For example, the new eBTC contest has a huge list of invariants that ensure the health of the protocol. In their case, these are rules like: the amount of collateral held should always be above 125% of the total debt of the protocol. 
 
-This is a great reason why it's always a good idea to test your code. You will gain a much better understanding of the code.
+Invariants are usually specific to the project you are building. What do you think may be a few invariants we have in our contract here? 
 
-## Token-related unit tests  
+Another way to approach it is to figure out what you expect the protocol state should be at a specific point in time. `SHOULD` is the key word here. For example:
 
-Now we need to complete the last of the token-streams unit tests.
+- A builder SHOULD only be able to claim up and equal to their `cap`
+- A builder SHOULD only have one stream allocated at a time  
+- A builder SHOULD be able to claim all the funds in a stream immediately after being added
+- Claimable funds SHOULD accrue linearly according to time passed up to `FREQUENCY` 
+- Additional funds SHOULD NOT accrue once `FREQUENCY` has passed
+- When withdrawing from a stream a the contract balance after withdrawal SHOULD be equal to the balance before - withdrawn amount
 
-First, we will need to create a better mock token to use here. The easiest way is to use the Openzeppelin ERC20 implementation, conveniently available from the library already imported, as a base.
+We already have six invariants that should hold in our contract that has less than 130 lines.  
 
-Looking ahead, we know that we would need to test the `TRANSFER_FAILED` error case for token transfers, so we quickly extend the ERC20 contract to include these functions. 
+## Reworking the current tests  
 
-This conveniently brings us to the concept of `mocks`. A mock contract is a contract that imitates a contract that our testing target is expected to work with. 
+Refer to the repo to see how the test file changes to accommodate foundry fuzz tests. 
 
-We create `MockToken`, which is basically an `ERC20` contract extension, with added `blacklist` capability so that we can test cases where transfers will fail.
+Highligting a few interesting cheats here: 
 
-> Always ensure you are creating accurate mocks! If the mock is inaccurate it may create or hide actual issues.  
+### `vm.assume`
 
-With the mock implemented we simply implement the rest of the token-related test cases that are yet to be done.
+`vm.assume(condition)` is a cheat code used in Foundry. This allows us to filter the values provided by Foundry.
 
-The `YourContract.t.sol` has extensive comments for these tests.
+### `assumeNotPrecompile(address)`  
 
-## When are we done? 
+`assumeNotPrecompile()` along with `assumeAddressIsNot()` and `assumeNotZeroAddress()` are great examples of extra cheat codes that Foundry provides access to. There are too many of these to name here, but it's worthwhile exploring it to find out.
 
-Before you call it quits on the unit tests, we first check the amount of `coverage` we have.
-
-```
-forge coverage
-```
-
-This will output a summary like this:
-```
-| File                    | % Lines         | % Statements    | % Branches     | % Funcs       |
-|-------------------------|-----------------|-----------------|----------------|---------------|
-src/YourContract.sol    | 100.00% (44/44) | 100.00% (64/64) | 96.15% (25/26) | 100.00% (6/6)
-```
-
-We see that we have almost perfect coverage, but there is one branch that isn't being hit. `branches` refers to the conditional statements (`if`) that are present in the code.
-
-Let's inspect this closely:
-
-```
-forge coverage --report debug
-```
-
-And this conveniently gives us the exact line that isn't covered yet:
-```
-Uncovered for src/YourContract.sol:
-- Branch (branch: 12, path: 1) (location: source ID 23, line 118, chars 4634-4672, hits: 0)
-```
-
-We know from our test `test_withdrawStreamTokenNonReceiver` that we do cover this line. So after some deliberation we will treat this as a bug in the reporting mechanism.
-
-> 100% coverage doesn't mean no bugs!
-
-We can now be confident that each function in `YourContract` has been tested. Our unit test is complete.
-
-Unfortunately, these unit tests clearly represent the most straightforward happy paths that users can take. Luckily Foundry gives us an super power: fuzzing!
-
-Come back for part 3 soon!
+### 
