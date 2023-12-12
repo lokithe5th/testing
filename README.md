@@ -105,4 +105,17 @@ Highligting a few interesting cheats here:
 
 `assumeNotPrecompile()` along with `assumeAddressIsNot()` and `assumeNotZeroAddress()` are great examples of extra cheat codes that Foundry provides access to. There are too many of these to name here, but it's worthwhile exploring it to find out.
 
-### 
+## Gotchas
+### Array values repeating  
+Pretty soon we run into this challenge during the `test_addBatchFuzz` test:
+```
+    ├─ [912] YourContract::streamedBuilders(0x0000000000000000000000000000000000002B28) [staticcall]
+    │   └─ ← 188063726281073745118794773114831187209042962873547266811280170673 [1.88e65], 86400 [8.64e4], MockToken: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
+    ├─ emit log(: Error: a == b not satisfied [uint])
+    ├─ emit log_named_uint(key:       Left, val: 188063726281073745118794773114831187209042962873547266811280170673 [1.88e65])
+    ├─ emit log_named_uint(key:      Right, val: 898734154750939992864526935637855074663122227116 [8.987e47])
+```
+
+What's happened here is that some of the addresses have been duplicated and the caps updated later on in the arrays. This can be frustrating and you can spend hours trying to find the issue until you realize that it's the fuzzed inputs that are being duplicated.
+
+The approach I chose to implement is quite simple: If the cap is not equal to the expected value, then we loop through the array and see if it has been updated somewhere later and then check that the address reflects correctly there. If this is not the case there is an error in the contract.

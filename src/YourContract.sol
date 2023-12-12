@@ -72,7 +72,7 @@ contract YourContract is Ownable {
         uint256 _length = _builders.length;
         if (_length != _caps.length) revert INVALID_ARRAY_INPUT();
         for (uint256 i = 0; i < _length;) {
-            addBuilderStream(payable(_builders[i]), _caps[i],_optionalTokenAddresses[i]);
+            addBuilderStream(payable(_builders[i]), _caps[i], _optionalTokenAddresses[i]);
             unchecked {
                 ++ i;
             }
