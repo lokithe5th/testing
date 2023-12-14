@@ -194,6 +194,7 @@ contract YourContractTest is Test {
     function test_allBuildersData(address[] memory _builders, uint256[] memory _caps) public {
         test_addBatchFuzz(_builders, _caps);
 
+        vm.warp(block.timestamp + 5 days);
         // We now check the returned data from the target function
         YourContract.BuilderData[] memory returnedData = yourContract.allBuildersData(_builders);
 
@@ -204,9 +205,8 @@ contract YourContractTest is Test {
             assertEq(returnedData[i].builderAddress, _builders[i]);
 
             if (returnedData[i].cap != _caps[i]) {
-                uint256 k;
                 // Because the if statement is testing that the cap was updated and that it reflects correctly
-                for (k = length; k > 0; k--) {
+                for (uint256 k = returnedData.length; k > 0; k--) {
                     if (returnedData[i].builderAddress == _builders[k - 1] && returnedData[i].cap == _caps[k - 1]) {
                         returnedData[i].cap = _caps[k - 1];
                         break;
@@ -221,9 +221,9 @@ contract YourContractTest is Test {
     }
 
     // Case: check that the contract can receive ETH
-    function test_receiveETH() public {
+    function test_receiveETH(uint256 amount) public {
         // We test this by sending one ether to the contract
-        (bool success, ) = address(yourContract).call{value: 1 ether}("");
+        (bool success, ) = address(yourContract).call{value: amount}("");
         require(success, "Failed to send");
 
         // We assert that the contract has this balance
@@ -231,30 +231,31 @@ contract YourContractTest is Test {
     }
 
     // Case: ETH-based, valid withdrawal
-    function test_streamWithdraw() public {
+    function test_streamWithdraw(address user, uint256 cap, uint256 amount) public {
+        assumeNotZeroAddress(user);
         // First we must add a stream
-        test_addBuilderStreamEth(bob, DEFAULT_STREAM_VALUE);
+        test_addBuilderStreamEth(user, cap);
         // Then we should fund it
-        test_receiveETH();
+        test_receiveETH(cap);
 
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
 
         // We check that Bob can withdraw DEFAULT_STREAM_VALUE
-        assertEq(yourContract.unlockedBuilderAmount(bob), DEFAULT_STREAM_VALUE);
+        assertEq(yourContract.unlockedBuilderAmount(user), cap);
 
         // We withdraw the ether, impersonating bob
-        uint256 bobBalance = bob.balance;
+        uint256 userBalance = user.balance;
 
-        vm.startPrank(bob);
+        vm.startPrank(user);
         
         vm.expectEmit(true, true, true, true, address(yourContract));
-        emit Withdraw(bob, DEFAULT_STREAM_VALUE, "Some reason");
+        emit Withdraw(user, cap, "Some reason");
 
-        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "Some reason");
+        yourContract.streamWithdraw(cap, "Some reason");
 
         // We assert that bob's balance is now DEFAULT_STREAM_VALUE more
-        assertEq(bob.balance, bobBalance + DEFAULT_STREAM_VALUE);
+        assertEq(user.balance, userBalance + cap);
     }
 
     // Case: token-based stream, withdrawal
@@ -313,8 +314,8 @@ contract YourContractTest is Test {
     }
 
     // Case: Non-builders have no stream
-    function test_streamWithdrawNoBuilder() public {
-        test_receiveETH();
+    function test_streamWithdrawNoBuilder(address user) public {
+        test_receiveETH(1 ether);
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
 
