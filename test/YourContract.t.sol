@@ -50,9 +50,8 @@ contract YourContractTest is Test {
     // We specifying address(0) to signify this is an ether stream
     function test_addBuilderStreamEth(address _builder, uint256 _cap) public {
         // We can specify bounds for fuzzed inputs using `vm.assume`
-        assumeNotPrecompile(_builder);
         assumeNotZeroAddress(_builder);
-        vm.assume(_cap <= DEFAULT_STREAM_VALUE);
+        //vm.assume(_cap <= DEFAULT_STREAM_VALUE);
 
         // Emits can be tricky in foundry
         vm.expectEmit(true, true, false, true, address(yourContract));
@@ -89,6 +88,7 @@ contract YourContractTest is Test {
     // But we also want to test some negative cases
     // Let's test if someone else tries to add a stream  
     function test_addBuilderStreamNotOwner(address _notTheOwner) public {
+        vm.assume(_notTheOwner != address(this));
         // To impersonate an account we simply use `vm.prank(address account)` which impersonates for 1 contract call
         // or we can use `vm.startPrank(address account)` to impersonate until we wish to stop
         vm.startPrank(_notTheOwner);
@@ -101,6 +101,10 @@ contract YourContractTest is Test {
 
     // Case: valid stream cap update
     function test_updateBuilderStreamCap(address _builder, uint256 _cap, uint256 _startingCap) public {
+        // Note: If the stream cap is 0, then the stream cap cannot be updated anymore
+        assumeNotZeroAddress(_builder);
+        vm.assume(_cap > 0);
+        vm.assume(_startingCap > 0);
         test_addBuilderStreamEth(_builder, _startingCap);
         
         // We know that Bob has been added in the preceeding function
@@ -222,17 +226,24 @@ contract YourContractTest is Test {
 
     // Case: check that the contract can receive ETH
     function test_receiveETH(uint256 amount) public {
+        vm.assume(amount > 0);
+        // When sending ETH, make sure you deal enough to your test contract
+        deal(address(this), amount);
         // We test this by sending one ether to the contract
         (bool success, ) = address(yourContract).call{value: amount}("");
         require(success, "Failed to send");
 
         // We assert that the contract has this balance
-        assertEq(address(yourContract).balance, 1 ether);
+        assertEq(address(yourContract).balance, amount);
     }
 
     // Case: ETH-based, valid withdrawal
     function test_streamWithdraw(address user, uint256 cap, uint256 amount) public {
+        vm.assume(cap > 0 && cap < type(uint96).max);
+        vm.assume(amount < cap);
+        vm.assume(user != address(this) && user != address(yourContract));
         assumeNotZeroAddress(user);
+        assumeNotPrecompile(user);
         // First we must add a stream
         test_addBuilderStreamEth(user, cap);
         // Then we should fund it
@@ -254,16 +265,19 @@ contract YourContractTest is Test {
 
         yourContract.streamWithdraw(cap, "Some reason");
 
-        // We assert that bob's balance is now DEFAULT_STREAM_VALUE more
+        // We assert that user's balance is now DEFAULT_STREAM_VALUE more
         assertEq(user.balance, userBalance + cap);
     }
 
     // Case: token-based stream, withdrawal
     function test_streamWithdrawToken(address _builder, uint256 _cap) public {
+        _cap = bound(_cap, 1, type(uint96).max);
+        vm.assume(_builder != address(this) && _builder != address(yourContract));
+        assumeNotZeroAddress(_builder);
         // First we must add a stream
         test_addBuilderStreamToken(_builder, _cap);
         // Then we should fund it
-        deal(address(mockToken), address(yourContract), 1 ether);
+        deal(address(mockToken), address(yourContract), _cap);
 
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
@@ -281,26 +295,29 @@ contract YourContractTest is Test {
 
         yourContract.streamWithdraw(_cap, "Some reason");
 
-        // We assert that bob's balance is now DEFAULT_STREAM_VALUE more
+        // We assert that user's balance is now DEFAULT_STREAM_VALUE more
         assertEq(mockToken.balanceOf(_builder), builderBalance + _cap);
     }
 
     // Case: no eth in contract, valid streams
-    function test_streamWithdrawNoETH() public {
-        test_addBuilderStreamEth(bob, DEFAULT_STREAM_VALUE);
+    function test_streamWithdrawNoETH(address _user, uint256 _cap) public {
+        _cap = bound(_cap, 1, type(uint96).max);
+        assumeNotZeroAddress(_user);
+        test_addBuilderStreamEth(_user, _cap);
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
 
         // We check that Bob can withdraw DEFAULT_STREAM_VALUE
-        assertEq(yourContract.unlockedBuilderAmount(bob), DEFAULT_STREAM_VALUE);
+        assertEq(yourContract.unlockedBuilderAmount(_user), _cap);
 
         // We expect the withdraw to revert  
         vm.expectRevert(YourContract.NOT_ENOUGH_FUNDS_IN_CONTRACT.selector);
-        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
+        yourContract.streamWithdraw(_cap, "None");
     }
 
     // Case: token-based stream, builders can withdraw tokens
     function test_streamWithdrawNoToken(address _builder, uint256 _cap) public {
+        vm.assume(_cap > 0);
         test_addBuilderStreamToken(_builder, _cap);
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
@@ -328,10 +345,11 @@ contract YourContractTest is Test {
     }
 
     // Case: ETH-based stream, not enough balance in contract for the amount requested
-    function test_streamWithdrawNotEnoughFundsInContractEth() public {
+    function test_streamWithdrawNotEnoughFundsInContractEth(address user, uint256 cap) public {
+        vm.assume(cap > 0);
         // We are adding Bob
-        test_addBuilderStreamEth(bob, DEFAULT_STREAM_VALUE);
-        (bool success, ) = address(yourContract).call{value: 0.2 ether}("");
+        test_addBuilderStreamEth(user, cap);
+        (bool success, ) = address(yourContract).call{value: cap / 2}("");
 
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 21 days);
@@ -339,14 +357,14 @@ contract YourContractTest is Test {
         // We expect the withdraw to revert  
         vm.startPrank(bob);
         vm.expectRevert(YourContract.NOT_ENOUGH_FUNDS_IN_CONTRACT.selector);
-        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
+        yourContract.streamWithdraw(cap, "None");
     }
 
     // Case: token-based stream, not enough balance in contract for the amount requested
     function test_streamWithdrawNotEnoughFundsInContractToken(address _builder, uint256 _cap) public {
-        // We are adding Bob
+        vm.assume(_cap > 0);
         test_addBuilderStreamToken(_builder, _cap);
-        deal(address(mockToken), address(yourContract), 0.2 ether);
+        deal(address(mockToken), address(yourContract), _cap / 2);
 
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 21 days);
@@ -358,39 +376,52 @@ contract YourContractTest is Test {
     }
 
     // Case: ETH-based stream, not enough accrued for the amount requested
-    function test_streamWithdrawNotEnoughFundsInStreamEth() public {
-        // We are adding Bob
+    function test_streamWithdrawNotEnoughFundsInStreamEth(address _builder, uint256 _cap) public {
+        //vm.assume(_cap > 0 && _cap < type(uint96).max);
+        _cap = bound(_cap, 1, type(uint96).max);
+        assumeNotPrecompile(_builder);
+        vm.assume(_builder != address(yourContract) && _builder != address(this));
+        vm.assume(_builder != address(mockToken));
+        assumeNotZeroAddress(_builder);
+        test_addBuilderStreamToken(_builder, _cap);
+
+        deal(address(yourContract), _cap * 2);
         // 16 Nov 2023
         vm.warp(1700123467);
-        test_addBuilderStreamEth(bob, DEFAULT_STREAM_VALUE);
+        test_addBuilderStreamEth(_builder, _cap);
         vm.warp(1700123468);
-        (bool success, ) = address(yourContract).call{value: 1 ether}("");
+        (bool success, ) = address(yourContract).call{value: _cap}("");
 
         // Bob makes his first withdrawal. 
         // By the way, the first withdrawal can be made immediately
         // Is this intended?
 
-        vm.prank(bob);
-        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
+        vm.prank(_builder);
+        yourContract.streamWithdraw(_cap, "None");
         // Now we need time to pass so the stream is not full
         // 30 Nov 2023
         vm.warp(1701333065);
 
         // We expect the withdraw to revert  
-        vm.startPrank(bob);
+        vm.startPrank(_builder);
         vm.expectRevert(YourContract.NOT_ENOUGH_FUNDS_IN_STREAM.selector);
-        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
+        yourContract.streamWithdraw(_cap, "None");
         vm.stopPrank();
     }
 
     // Case: token-based stream, not enough accrued for the amount requested
     function test_streamWithdrawNotEnoughFundsInStreamToken(address _builder, uint256 _cap) public {
+        // Note: we picked up an important constraint here
+        // If the `_cap` is large enough it will cause an overflow within the `streamWithdraw` call where
+        // `(block.timestamp - builderStream.last) * _amount `
+        _cap = bound(_cap, 1, type(uint96).max);
+        assumeNotZeroAddress(_builder);
         // We are adding Bob
         // 16 Nov 2023
         vm.warp(1700123467);
         test_addBuilderStreamToken(_builder, _cap);
         vm.warp(1700123468);
-        deal(address(mockToken), address(yourContract), 1 ether);
+        deal(address(mockToken), address(yourContract), _cap * 2);
 
         // Bob makes his first withdrawal. 
         // By the way, the first withdrawal can be made immediately
@@ -465,11 +496,13 @@ contract YourContractTest is Test {
     }
 
     // Case: ETH-based stream, transfer to builder fails
-    function test_withdrawStreamEthNonReceiver() public {
+    function test_withdrawStreamEthNonReceiver(uint256 _cap) public {
+        vm.assume(_cap > 0 && _cap < type(uint96).max);
         // First we must add a stream
-        yourContract.addBuilderStream(payable(address(mockToken)), DEFAULT_STREAM_VALUE, address(0));
+        yourContract.addBuilderStream(payable(address(mockToken)), _cap, address(0));
         // Then we should fund it
-        (bool success, ) = payable(address(yourContract)).call{value: 1 ether}("");
+        deal(address(this), _cap);
+        (bool success, ) = payable(address(yourContract)).call{value: _cap}("");
 
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
@@ -477,7 +510,7 @@ contract YourContractTest is Test {
         vm.startPrank(address(mockToken));
 
         vm.expectRevert(YourContract.TRANSFER_FAILED.selector);
-        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "Some reason");
+        yourContract.streamWithdraw(_cap, "Some reason");
 
         // We assert that 
         assertEq(address(mockToken).balance, 0);
@@ -485,10 +518,11 @@ contract YourContractTest is Test {
 
     // Case: token-based stream, `transfer` to builder fails
     function test_withdrawStreamTokenNonReceiver(address _builder, uint256 _cap) public {
+        vm.assume(_cap > 0 && _cap < type(uint96).max);
         // First we must add a stream
         test_addBuilderStreamToken(_builder, _cap);
         // Then we should fund it
-        deal(address(mockToken), address(yourContract), 1 ether);
+        deal(address(mockToken), address(yourContract), _cap);
 
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
