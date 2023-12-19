@@ -10,7 +10,7 @@ import "src/YourContract.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "src/mocks/MockToken.sol";
 
-contract YourContractTest is Test {
+contract YourContractFuzz is Test {
     // As with a normal smart contract we can declare our global variables here
     // This is our testing target
     YourContract public yourContract;
