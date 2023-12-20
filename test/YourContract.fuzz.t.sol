@@ -10,6 +10,7 @@ import "src/YourContract.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "src/mocks/MockToken.sol";
 
+// This is the modified contract for fuzzing in Foundry for Part-3
 contract YourContractFuzz is Test {
     // As with a normal smart contract we can declare our global variables here
     // This is our testing target
@@ -39,6 +40,14 @@ contract YourContractFuzz is Test {
         mockToken = new MockToken("Mock Token", "MCK", 18);
     }
 
+    // Pseudorandom decimals token generator
+    // It uses the fuzz input from foundry to generate a pseudorandom amount of decimals
+    function _tokenHelper(address _seed) internal returns (address) {
+        uint256 input = uint256(keccak256(abi.encodePacked(_seed)));
+        uint8 decimals = uint8(bound(input, 1, 30));
+        return address(new MockToken("Mock Token", "TKN", decimals));
+    }
+
     // Let's do a simple test first to check that we have deployed our contract correctly
     // In this case there is a public constant we can test
     function test_constants() public {
@@ -51,7 +60,7 @@ contract YourContractFuzz is Test {
     function test_addBuilderStreamEth(address _builder, uint256 _cap) public {
         // We can specify bounds for fuzzed inputs using `vm.assume`
         assumeNotZeroAddress(_builder);
-        //vm.assume(_cap <= DEFAULT_STREAM_VALUE);
+
 
         // Emits can be tricky in foundry
         vm.expectEmit(true, true, false, true, address(yourContract));
@@ -73,6 +82,8 @@ contract YourContractFuzz is Test {
         // Emits can be tricky in foundry
         vm.expectEmit(true, true, false, true, address(yourContract));
         emit AddBuilder(_builder, _cap);
+
+        mockToken = MockToken(_tokenHelper(_builder));
 
         yourContract.addBuilderStream(payable(_builder), _cap, address(mockToken));
 
@@ -120,7 +131,9 @@ contract YourContractFuzz is Test {
 
     // Case: check against an unauthorized call to udpate stream cap
     function test_updateBuilderStreamCapNotOwner(address _notOwner) public {
+        vm.assume(address(this) != _notOwner);
         test_addBuilderStreamEth(bob, DEFAULT_STREAM_VALUE);
+
         vm.startPrank(_notOwner);
         
         // Only the owner should be able to update a stream
@@ -239,21 +252,28 @@ contract YourContractFuzz is Test {
 
     // Case: ETH-based, valid withdrawal
     function test_streamWithdraw(address user, uint256 cap, uint256 amount) public {
-        vm.assume(cap > 0 && cap < type(uint96).max);
+        _cap = bound(_cap, 1, type(uint96).max);
+        // We need to enforce our assumptions for the inputs here
+        // Note: there is an explicit assumption that `amount` is less than `cap`
+        // This is because the contrary is explicitly tested `NotEnoughEthInStream`
         vm.assume(amount < cap);
         vm.assume(user != address(this) && user != address(yourContract));
+        vm.assume(user != address(mockToken));
+
+        // These addresses may revert ETH calls
         assumeNotZeroAddress(user);
         assumeNotPrecompile(user);
-        // First we must add a stream
+        assumeNotForgeAddress(user);
+
+        // Setup the contract
         test_addBuilderStreamEth(user, cap);
-        // Then we should fund it
         test_receiveETH(cap);
 
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
 
-        // We check that Bob can withdraw DEFAULT_STREAM_VALUE
-        assertEq(yourContract.unlockedBuilderAmount(user), cap);
+        // We check that `user` can withdraw `amount`
+        assertEq(yourContract.unlockedBuilderAmount(user), amount);
 
         // We withdraw the ether, impersonating bob
         uint256 userBalance = user.balance;
@@ -261,19 +281,22 @@ contract YourContractFuzz is Test {
         vm.startPrank(user);
         
         vm.expectEmit(true, true, true, true, address(yourContract));
-        emit Withdraw(user, cap, "Some reason");
+        emit Withdraw(user, amount, "Some reason");
 
-        yourContract.streamWithdraw(cap, "Some reason");
+        yourContract.streamWithdraw(amount, "Some reason");
 
         // We assert that user's balance is now DEFAULT_STREAM_VALUE more
-        assertEq(user.balance, userBalance + cap);
+        assertEq(user.balance, userBalance + amount);
     }
 
     // Case: token-based stream, withdrawal
     function test_streamWithdrawToken(address _builder, uint256 _cap) public {
         _cap = bound(_cap, 1, type(uint96).max);
         vm.assume(_builder != address(this) && _builder != address(yourContract));
+
+        // Tokens cannot be sent to the ZERO_ADDRESS
         assumeNotZeroAddress(_builder);
+
         // First we must add a stream
         test_addBuilderStreamToken(_builder, _cap);
         // Then we should fund it
@@ -282,32 +305,32 @@ contract YourContractFuzz is Test {
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
 
-        // We check that Bob can withdraw DEFAULT_STREAM_VALUE
+        // We check that `user` can withdraw `cap`
         assertEq(yourContract.unlockedBuilderAmount(_builder), _cap);
 
-        // We withdraw the token, impersonating bob
+        // Get starting balance
         uint256 builderBalance = mockToken.balanceOf(_builder);
 
         vm.startPrank(_builder);
-        
         vm.expectEmit(true, true, true, true, address(yourContract));
         emit Withdraw(_builder, _cap, "Some reason");
 
         yourContract.streamWithdraw(_cap, "Some reason");
 
-        // We assert that user's balance is now DEFAULT_STREAM_VALUE more
+        // We assert that user's balance is now `_cap` more
         assertEq(mockToken.balanceOf(_builder), builderBalance + _cap);
     }
 
-    // Case: no eth in contract, valid streams
+    // Case: fail state, no eth in contract, valid streams
     function test_streamWithdrawNoETH(address _user, uint256 _cap) public {
+        // Enforce appropriate limits
         _cap = bound(_cap, 1, type(uint96).max);
         assumeNotZeroAddress(_user);
+
         test_addBuilderStreamEth(_user, _cap);
-        // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
 
-        // We check that Bob can withdraw DEFAULT_STREAM_VALUE
+        // We check that `user` can withdraw `cap`
         assertEq(yourContract.unlockedBuilderAmount(_user), _cap);
 
         // We expect the withdraw to revert  
@@ -315,14 +338,14 @@ contract YourContractFuzz is Test {
         yourContract.streamWithdraw(_cap, "None");
     }
 
-    // Case: token-based stream, builders can withdraw tokens
+    // Case: fail state, token-based stream, builders can withdraw tokens
     function test_streamWithdrawNoToken(address _builder, uint256 _cap) public {
-        vm.assume(_cap > 0);
+        cap = bound(cap, 1, type(uint96).max);
+
         test_addBuilderStreamToken(_builder, _cap);
-        // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
 
-        // We check that Bob can withdraw DEFAULT_STREAM_VALUE
+        // We check that `user` can withdraw `cap`
         assertEq(yourContract.unlockedBuilderAmount(_builder), _cap);
 
         // We expect the withdraw to revert  
@@ -330,7 +353,7 @@ contract YourContractFuzz is Test {
         yourContract.streamWithdraw(_cap, "None");
     }
 
-    // Case: Non-builders have no stream
+    // Case: fail-state, non-builders have no stream
     function test_streamWithdrawNoBuilder(address user) public {
         test_receiveETH(1 ether);
         // Now we need enough time to pass so that the stream is full
@@ -346,7 +369,7 @@ contract YourContractFuzz is Test {
 
     // Case: ETH-based stream, not enough balance in contract for the amount requested
     function test_streamWithdrawNotEnoughFundsInContractEth(address user, uint256 cap) public {
-        vm.assume(cap > 0);
+        cap = bound(cap, 1, type(uint96).max);
         // We are adding Bob
         test_addBuilderStreamEth(user, cap);
         (bool success, ) = address(yourContract).call{value: cap / 2}("");
@@ -362,7 +385,12 @@ contract YourContractFuzz is Test {
 
     // Case: token-based stream, not enough balance in contract for the amount requested
     function test_streamWithdrawNotEnoughFundsInContractToken(address _builder, uint256 _cap) public {
-        vm.assume(_cap > 0);
+        _cap = bound(_cap, 1, type(uint96).max);
+
+        assumeNotZeroAddress(_builder);
+        assumeNotPrecompile(_builder);
+        assumeNotForgeAddress(_builder);
+
         test_addBuilderStreamToken(_builder, _cap);
         deal(address(mockToken), address(yourContract), _cap / 2);
 
@@ -377,25 +405,27 @@ contract YourContractFuzz is Test {
 
     // Case: ETH-based stream, not enough accrued for the amount requested
     function test_streamWithdrawNotEnoughFundsInStreamEth(address _builder, uint256 _cap) public {
-        //vm.assume(_cap > 0 && _cap < type(uint96).max);
         _cap = bound(_cap, 1, type(uint96).max);
-        assumeNotPrecompile(_builder);
-        vm.assume(_builder != address(yourContract) && _builder != address(this));
-        vm.assume(_builder != address(mockToken));
-        assumeNotZeroAddress(_builder);
-        test_addBuilderStreamToken(_builder, _cap);
 
+        vm.assume(_builder != address(yourContract) && _builder != address(this));
+        assumeNotZeroAddress(_builder);
+        assumeNotPrecompile(_builder);
+        assumeNotForgeAddress(_builder);
+        
+        test_addBuilderStreamToken(_builder, _cap);
+        // We assert this assumption here because the preceding call changes the `MockToken`
+        vm.assume(_builder != address(mockToken));
+
+        // We provide enough funds for the contract itself so contract balance > requested
         deal(address(yourContract), _cap * 2);
+
         // 16 Nov 2023
         vm.warp(1700123467);
         test_addBuilderStreamEth(_builder, _cap);
         vm.warp(1700123468);
         (bool success, ) = address(yourContract).call{value: _cap}("");
 
-        // Bob makes his first withdrawal. 
-        // By the way, the first withdrawal can be made immediately
-        // Is this intended?
-
+        // `user` makes their first withdrawal. 
         vm.prank(_builder);
         yourContract.streamWithdraw(_cap, "None");
         // Now we need time to pass so the stream is not full
@@ -415,17 +445,16 @@ contract YourContractFuzz is Test {
         // If the `_cap` is large enough it will cause an overflow within the `streamWithdraw` call where
         // `(block.timestamp - builderStream.last) * _amount `
         _cap = bound(_cap, 1, type(uint96).max);
+
         assumeNotZeroAddress(_builder);
-        // We are adding Bob
+        assumeNotPrecompile(_builder);
+        assumeNotForgeAddress(_builder);
+
         // 16 Nov 2023
         vm.warp(1700123467);
         test_addBuilderStreamToken(_builder, _cap);
         vm.warp(1700123468);
         deal(address(mockToken), address(yourContract), _cap * 2);
-
-        // Bob makes his first withdrawal. 
-        // By the way, the first withdrawal can be made immediately
-        // Is this intended?
 
         vm.prank(_builder);
         yourContract.streamWithdraw(_cap, "None");
@@ -441,97 +470,96 @@ contract YourContractFuzz is Test {
     }
 
     // Case: builders should accrue streams according to time passed
-    function test_unlockedBuilderAmount() public {
-        // This adds Bob's stream
+    function test_unlockedBuilderAmount(address _builder, uint256 _cap) public {
+        _cap = bound(_cap, 1, type(uint96).max);
+
+        assumeNotZeroAddress(_builder);
+        assumeNotPrecompile(_builder);
+        assumeNotForgeAddress(_builder);
+
+        // This adds builder's stream
         vm.warp(1700123467);
-        test_addBuilderStreamEth(bob, DEFAULT_STREAM_VALUE);
+        test_addBuilderStreamEth(_builder, _cap);
         // We fund and withdraw the first immediate stream
         vm.warp(1700123468);
-        (bool success, ) = address(yourContract).call{value: 1 ether}("");
+        deal(address(this), _cap);
+        (bool success, ) = address(yourContract).call{value: _cap}("");
 
-        // Bob makes his first withdrawal. 
-        // By the way, the first withdrawal can be made immediately
-        // Is this intended? 
-        // It turns out: Yes! BuidlGuidl is awesome like that
-
-        vm.prank(bob);
-        yourContract.streamWithdraw(DEFAULT_STREAM_VALUE, "None");
+        vm.prank(_builder);
+        yourContract.streamWithdraw(_cap, "None");
 
         // Now we need some time to pass so the stream is not full
         // 30 Nov 2023
         // We need to check that Bob has accrued the appropriate amount at various timestamps
         // We check in increments of 10 days
-        uint256 amountAt0Days = yourContract.unlockedBuilderAmount(bob);
-        assertEq(amountAt0Days, DEFAULT_STREAM_VALUE * 0 / 30);
+        uint256 amountAt0Days = yourContract.unlockedBuilderAmount(_builder);
+        assertEq(amountAt0Days, _cap * 0 / 30);
 
         vm.warp(1700123468 + 10 days);
-        uint256 amountAt10Days = yourContract.unlockedBuilderAmount(bob);
-        assertEq(amountAt10Days, DEFAULT_STREAM_VALUE * 10 / 30);
+        uint256 amountAt10Days = yourContract.unlockedBuilderAmount(_builder);
+        assertEq(amountAt10Days, _cap * 10 / 30);
 
         vm.warp(1700123468 + 20 days);
-        uint256 amountAt20Days = yourContract.unlockedBuilderAmount(bob);
-        assertEq(amountAt20Days, DEFAULT_STREAM_VALUE * 20 / 30);
+        uint256 amountAt20Days = yourContract.unlockedBuilderAmount(_builder);
+        assertEq(amountAt20Days, _cap * 20 / 30);
 
         vm.warp(1700123468 + 30 days);
-        uint256 amountAt30Days = yourContract.unlockedBuilderAmount(bob);
-        assertEq(amountAt30Days, DEFAULT_STREAM_VALUE * 30 / 30);
+        uint256 amountAt30Days = yourContract.unlockedBuilderAmount(_builder);
+        assertEq(amountAt30Days, _cap * 30 / 30);
 
         vm.warp(1700123468 + 50 days);
-        uint256 amountAt50Days = yourContract.unlockedBuilderAmount(bob);
-        assertEq(amountAt30Days, DEFAULT_STREAM_VALUE * 30 / 30);
+        uint256 amountAt50Days = yourContract.unlockedBuilderAmount(_builder);
+        assertEq(amountAt30Days, _cap * 30 / 30);
     }
 
     // Case: Non-builders should not have amounts
-    function test_unlockedBuilderAmountNonBuilder() public {
-        // This adds Bob's stream
+    function test_unlockedBuilderAmountNonBuilder(address _builder) public {
+        vm.assume(_builder != bob);
+
         vm.warp(1700123467);
         test_addBuilderStreamEth(bob, DEFAULT_STREAM_VALUE);
-        // We fund and withdraw the first immediate stream
         vm.warp(1700183468);
+
         (bool success, ) = address(yourContract).call{value: 1 ether}("");
 
         // We check that a non-builder cannot acrue a stream
         // It should always return 0
-        assertEq(yourContract.unlockedBuilderAmount(alice), 0);
+        assertEq(yourContract.unlockedBuilderAmount(_builder), 0);
     }
 
     // Case: ETH-based stream, transfer to builder fails
     function test_withdrawStreamEthNonReceiver(uint256 _cap) public {
         vm.assume(_cap > 0 && _cap < type(uint96).max);
-        // First we must add a stream
+
+        // We add the `mockToken` as a builder because we know it cannot `receive` ETH
         yourContract.addBuilderStream(payable(address(mockToken)), _cap, address(0));
-        // Then we should fund it
+
         deal(address(this), _cap);
         (bool success, ) = payable(address(yourContract)).call{value: _cap}("");
 
-        // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
-
         vm.startPrank(address(mockToken));
 
         vm.expectRevert(YourContract.TRANSFER_FAILED.selector);
         yourContract.streamWithdraw(_cap, "Some reason");
 
-        // We assert that 
         assertEq(address(mockToken).balance, 0);
     }
 
     // Case: token-based stream, `transfer` to builder fails
     function test_withdrawStreamTokenNonReceiver(address _builder, uint256 _cap) public {
         vm.assume(_cap > 0 && _cap < type(uint96).max);
-        // First we must add a stream
+
         test_addBuilderStreamToken(_builder, _cap);
-        // Then we should fund it
         deal(address(mockToken), address(yourContract), _cap);
 
         // Now we need enough time to pass so that the stream is full
         vm.warp(block.timestamp + 31 days);
 
-        // We check that Bob can withdraw DEFAULT_STREAM_VALUE
         assertEq(yourContract.unlockedBuilderAmount(_builder), _cap);
 
-        // We withdraw the token, impersonating bob
         uint256 bobBalance = mockToken.balanceOf(_builder);
+        // We test that token transfers fail by blacklisting the receiver
         mockToken.setBlacklist(_builder, true);
 
         vm.startPrank(_builder);

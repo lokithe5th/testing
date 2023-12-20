@@ -97,13 +97,19 @@ Refer to the repo to see how the test file changes to accommodate foundry fuzz t
 
 Highligting a few interesting cheats here: 
 
-### `vm.assume`
+### `vm.assume()`
 
 `vm.assume(condition)` is a cheat code used in Foundry. This allows us to filter the values provided by Foundry.
+
+### `bound()`
 
 ### `assumeNotPrecompile(address)`  
 
 `assumeNotPrecompile()` along with `assumeAddressIsNot()` and `assumeNotZeroAddress()` are great examples of extra cheat codes that Foundry provides access to. There are too many of these to name here, but it's worthwhile exploring it to find out.
+
+### `assumeNotForgeAddress()`  
+
+### `assumeNotZeroAddress()`
 
 ## Gotchas
 ### Array values repeating  
@@ -119,3 +125,9 @@ Pretty soon we run into this challenge during the `test_addBatchFuzz` test:
 What's happened here is that some of the addresses have been duplicated and the caps updated later on in the arrays. This can be frustrating and you can spend hours trying to find the issue until you realize that it's the fuzzed inputs that are being duplicated.
 
 The approach I chose to implement is quite simple: If the cap is not equal to the expected value, then we loop through the array and see if it has been updated somewhere later and then check that the address reflects correctly there. If this is not the case there is an error in the contract.
+
+## New issues exposed by fuzz tests  
+
+### `cap` should not be greater than a `uint96` value  
+
+### `cap` can be set to be `0`
