@@ -87,9 +87,11 @@ Another way to approach it is to figure out what you expect the protocol state s
 - A builder SHOULD be able to claim all the funds in a stream immediately after being added
 - Claimable funds SHOULD accrue linearly according to time passed up to `FREQUENCY` 
 - Additional funds SHOULD NOT accrue once `FREQUENCY` has passed
-- When withdrawing from a stream a the contract balance after withdrawal SHOULD be equal to the balance before - withdrawn amount
+- When withdrawing from a stream the contract balance after withdrawal SHOULD be equal to the balance before - withdrawn amount
+- Non-builders SHOULD NOT be able to claim streams
+- Only the owner SHOULD be able to access privileged functions.
 
-We already have six invariants that should hold in our contract that has less than 130 lines.  
+We have eight invariants that should hold in our contract that has less than 130 lines.  
 
 ## Reworking the current tests  
 
@@ -99,17 +101,18 @@ Highligting a few interesting cheats here:
 
 ### `vm.assume()`
 
-`vm.assume(condition)` is a cheat code used in Foundry. This allows us to filter the values provided by Foundry.
+`vm.assume(condition)` is a cheat code used in Foundry. This allows us to filter the values provided by Foundry. It's used by simply stating a condition that must hold for the fuzzed inputs. E.g. `vm.assume(_builder != address(this))`
 
 ### `bound()`
+You will at times run into issues where Foundry errors out because you've rejected too many possible inputs with the `assume` cheat. 
+
+We get around this by using `input = bound(input, minVal, maxVal)`, where `input` is a `uint256` provided by the fuzzer and the `minVal` is the lowest allowed value and `maxVal` is the largest allowed value. It takes the input created by the fuzzer and returns a value bound within the min and max ranges you define. 
+
+Nifty! 
 
 ### `assumeNotPrecompile(address)`  
 
 `assumeNotPrecompile()` along with `assumeAddressIsNot()` and `assumeNotZeroAddress()` are great examples of extra cheat codes that Foundry provides access to. There are too many of these to name here, but it's worthwhile exploring it to find out.
-
-### `assumeNotForgeAddress()`  
-
-### `assumeNotZeroAddress()`
 
 ## Gotchas
 ### Array values repeating  
@@ -126,8 +129,47 @@ What's happened here is that some of the addresses have been duplicated and the 
 
 The approach I chose to implement is quite simple: If the cap is not equal to the expected value, then we loop through the array and see if it has been updated somewhere later and then check that the address reflects correctly there. If this is not the case there is an error in the contract.
 
+### `block.timestamp`  
+We once again ran into some issues with `block.timestamp`. When dealing with contracts that use `block.timestamp`, be sure to set the current time with `vm.warp(targetDate)`.
+
+Otherwise you may experience issues when trying to do math functions, as the block timestamp may start at 0. 
+
 ## New issues exposed by fuzz tests  
 
-### `cap` should not be greater than a `uint96` value  
+As expected our fuzz testing exposed a few implicit assumptions and/or issues that we hadn't yet documented. 
 
-### `cap` can be set to be `0`
+Such findings are important because of the composability of DeFi - what happens to someone building on our contracts that is unaware of our implicit assumptions? It creates a security risk. This is why we make our assumptions explicit in our docs.
+
+### `cap` should not be greater than a `uint96` value  
+After running a few fuzz tests it became apparent that for a large enough `cap` value, the following code would create an unexpected overflow:
+```
+        builderStream.last = builderStream.last + ((block.timestamp - builderStream.last) * _amount / totalAmountCanWithdraw);
+```
+
+This is an impossible value in practice, yet it revealed the implicit assumption that token or ETH amounts would be less than the maximum of `uint256`.
+
+Our fix in our test is to bind the `cap` to always be less than `uint128`. 
+
+The reporting would be a `LOW` severity finding with the recommendation to either document that stream caps must be less than `uint128` or explicitly require it when creating a stream.
+
+### `cap` can be set to be `0` 
+Another finding from the foundry fuzzing is that a stream cap can be set to `0`. This would cause updates to the stream cap to always revert because of this code:
+```
+    if (builderStream.cap == 0) revert NO_ACTIVE_STREAM();
+```
+
+This would be another `LOW` severity finding with a recommendation to not allow a stream cap to be set as `0`. Should a stream need to be removed it should be done in an explicit `reduceBuilderStreamCap` function.
+
+This led to another interesting finding:  
+
+### Streams can be overwritten, causing builders to lose their current stream's accrued funds
+The owner is able to add the same builder more than once, but with different `optionalTokenAddress` parameters. This creates a scenario where a builder may be busy accruing funds in one token, but the `owner` then adds the builder again but with a different token address. The builder's `BuilderStreamInfo.last` is overwritten and the builder will be able to withdraw the full amount of the new stream immediately, however they will not be able to access the previously accrued tokens.
+
+This may be a `MEDIUM` finding in some cases, but here the `addBuilderStream` function has access control and this would constitute an admin mistake. In addition, switching the token back is possible by calling `addBuilderStream` again with the old token. The full amount is then withdrawable immediately.
+
+## Conclusion  
+That's a wrap for part 3! 
+
+As you can see, simple fuzzing in Foundry can be powerful for identifying implicit assumptions about your project. 
+
+The next part will focus on some more advanced fuzzing tools. First up: Medusa!
