@@ -32,7 +32,7 @@ RUN cd $WORKDIR
 
 RUN echo "[$(date)] Install OS libraries"
 RUN apt-get update
-RUN apt-get upgrade -y
+## RUN apt-get upgrade -y
 RUN apt-get install -y curl git gcc make python3-pip unzip jq wget tar
 
 ## Install Node via nvm to avoid bs

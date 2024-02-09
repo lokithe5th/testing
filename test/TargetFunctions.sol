@@ -9,11 +9,11 @@ import {vm} from "@chimera/Hevm.sol";
 
 abstract contract TargetFunctions is BaseTargetFunctions, Properties, BeforeAfter {
 
-    function yourContract_addBatch(address[] _builders, uint256[] _caps, address[] _optionalTokenAddresses) public {
+    function yourContract_addBatch(address[] memory _builders, uint256[] memory _caps, address[] memory _optionalTokenAddresses) public {
       yourContract.addBatch(_builders, _caps, _optionalTokenAddresses);
     }
 
-    function yourContract_addBuilderStream(address _builder, uint256 _cap, address _optionalTokenAddress) public {
+    function yourContract_addBuilderStream(address payable _builder, uint256 _cap, address _optionalTokenAddress) public {
       yourContract.addBuilderStream(_builder, _cap, _optionalTokenAddress);
     }
 
@@ -21,7 +21,7 @@ abstract contract TargetFunctions is BaseTargetFunctions, Properties, BeforeAfte
       yourContract.renounceOwnership();
     }
 
-    function yourContract_streamWithdraw(uint256 _amount, string _reason) public {
+    function yourContract_streamWithdraw(uint256 _amount, string memory _reason) public {
       yourContract.streamWithdraw(_amount, _reason);
     }
 
@@ -29,7 +29,7 @@ abstract contract TargetFunctions is BaseTargetFunctions, Properties, BeforeAfte
       yourContract.transferOwnership(newOwner);
     }
 
-    function yourContract_updateBuilderStreamCap(address _builder, uint256 _cap) public {
+    function yourContract_updateBuilderStreamCap(address payable _builder, uint256 _cap) public {
       yourContract.updateBuilderStreamCap(_builder, _cap);
     }
 }

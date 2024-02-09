@@ -2,6 +2,8 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+solc = "0.8.14"
+evm_version = "paris"
 
 [fuzz]
 runs = 1000
