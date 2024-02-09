@@ -470,7 +470,7 @@ contract YourContractFuzz is Test {
         vm.stopPrank();
     }
 
-    // Case: builders should accrue streams according to time passed
+    // Case: builders should accrue streams according to time passed.
     function test_unlockedBuilderAmount(address _builder, uint256 _cap) public {
         _cap = bound(_cap, 1, type(uint128).max);
 
