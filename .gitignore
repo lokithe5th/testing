@@ -1,5 +1,7 @@
 # Compiler files
 cache/
+medusa
+crytic-export
 
 # Ignores development broadcast logs
 !/broadcast
