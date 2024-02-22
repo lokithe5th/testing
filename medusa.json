@@ -76,7 +76,9 @@
       "target": "test/TargetFunctions.sol",
       "solcVersion": "",
       "exportDirectory": "",
-      "args": []
+      "args": [
+        "--solc-remaps", ["@openzeppelin/=lib/openzeppelin-contracts/", "@chimera/=lib/chimera/src/"]
+      ]
     }
   },
   "logging": {
