@@ -73,9 +73,9 @@
   "compilation": {
     "platform": "crytic-compile",
     "platformConfig": {
-      "target": "test/TargetFunctions.sol",
+      "target": "test/CryticTester.sol",
       "solcVersion": "",
-      "exportDirectory": ".",
+      "exportDirectory": "",
       "args": [
         "--solc-remaps", "@openzeppelin/=lib/openzeppelin-contracts/ @chimera/=lib/chimera/src/"
       ]
