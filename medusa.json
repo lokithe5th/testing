@@ -73,7 +73,7 @@
   "compilation": {
     "platform": "crytic-compile",
     "platformConfig": {
-      "target": "test/CryticTester.sol",
+      "target": "fuzz/CryticTester.sol",
       "solcVersion": "",
       "exportDirectory": "",
       "args": [
