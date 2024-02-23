@@ -77,7 +77,7 @@
       "solcVersion": "",
       "exportDirectory": "",
       "args": [
-        "--solc-remaps", "@openzeppelin/=lib/openzeppelin-contracts/ @chimera/=lib/chimera/src/"
+        "--solc-remaps", "@openzeppelin/=lib/openzeppelin-contracts/ @chimera/=lib/chimera/src/", "--foundry-compile-all"
       ]
     }
   },
